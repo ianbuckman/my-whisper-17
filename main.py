@@ -70,6 +70,9 @@ from AppKit import (
     NSViewWidthSizable,
     NSViewHeightSizable,
     NSSound,
+    NSStatusBar,
+    NSVariableStatusItemLength,
+    NSImage,
 )
 from Foundation import NSObject, NSLog, NSURL
 from PyObjCTools import AppHelper
@@ -167,6 +170,8 @@ class AppDelegate(NSObject):
             log.info("_setup_window 完成")
             self._setup_hotkey()
             log.info("_setup_hotkey 完成")
+            self._setup_status_bar()
+            log.info("_setup_status_bar 完成")
         except Exception as e:
             log.error("初始化失败: %s", e, exc_info=True)
             return
@@ -334,6 +339,46 @@ class AppDelegate(NSObject):
             ) else event,
         )
 
+    # ── 菜单栏图标 ─────────────────────────────────────────────────────────
+
+    def _setup_status_bar(self):
+        self._status_item = NSStatusBar.systemStatusBar().statusItemWithLength_(
+            NSVariableStatusItemLength
+        )
+        btn = self._status_item.button()
+        img = NSImage.imageWithSystemSymbolName_accessibilityDescription_("mic", None)
+        if img:
+            img.setTemplate_(True)
+            btn.setImage_(img)
+        else:
+            btn.setTitle_("🎙")
+
+        menu = NSMenu.alloc().init()
+        self._record_menu_item = menu.addItemWithTitle_action_keyEquivalent_(
+            "开始转录", "toggleRecording:", ""
+        )
+        menu.addItem_(NSMenuItem.separatorItem())
+        menu.addItemWithTitle_action_keyEquivalent_("显示主窗口", "showMainWindow:", "")
+        menu.addItem_(NSMenuItem.separatorItem())
+        menu.addItemWithTitle_action_keyEquivalent_("退出", "quitApp:", "")
+        self._status_item.setMenu_(menu)
+
+    def _update_status_bar(self):
+        if not hasattr(self, '_status_item'):
+            return
+        symbol = "mic.fill" if self.is_recording else "mic"
+        title = "停止转录" if self.is_recording else "开始转录"
+        self._record_menu_item.setTitle_(title)
+        img = NSImage.imageWithSystemSymbolName_accessibilityDescription_(symbol, None)
+        if img:
+            img.setTemplate_(True)
+            self._status_item.button().setImage_(img)
+
+    @objc.IBAction
+    def showMainWindow_(self, sender):
+        self.window.makeKeyAndOrderFront_(None)
+        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+
     # ── 模型加载 ────────────────────────────────────────────────────────────
 
     def _load_model(self):
@@ -422,6 +467,7 @@ class AppDelegate(NSObject):
             self._stop_recording()
             return
 
+        self._update_status_bar()
         threading.Thread(target=self._transcribe_loop, daemon=True).start()
 
     def _stop_recording(self):
@@ -432,6 +478,7 @@ class AppDelegate(NSObject):
             self.stream = None
         self._eval_js("setRecording(false)")
         self.window.setTitle_("My Whisper")
+        self._update_status_bar()
 
         # 播放提示音
         sound = NSSound.soundNamed_("Pop")
