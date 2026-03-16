@@ -153,10 +153,77 @@ body {
 }
 
 .segment {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   font: 15px/1.8 "PingFang SC", -apple-system, sans-serif;
   margin-bottom: 4px;
   padding: 2px 0;
   animation: slideIn 0.25s ease-out;
+}
+
+.segment-text {
+  flex: 1;
+  outline: none;
+  caret-color: var(--text);
+}
+
+.cursor-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 2px 0;
+  font: 15px/1.8 "PingFang SC", -apple-system, sans-serif;
+  visibility: hidden;
+}
+
+.cursor-line.recording {
+  visibility: visible;
+}
+
+.cursor-line.editing {
+  visibility: hidden;
+}
+
+.cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  background: var(--text);
+  border-radius: 1px;
+  vertical-align: text-bottom;
+  animation: blink 1s step-start infinite;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.copy-btn {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 3px;
+  border-radius: 5px;
+  opacity: 0.45;
+  transition: opacity 0.15s, background 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.copy-btn:hover {
+  background: var(--btn-bg);
+  color: var(--text);
+}
+
+.copy-btn:active {
+  opacity: 0.5;
 }
 
 @keyframes slideIn {
@@ -247,6 +314,9 @@ body {
   <div class="empty-state" id="emptyState">
     <span>按 <span class="shortcut">⌘⇧Space</span> 或点击录音按钮开始</span>
   </div>
+  <div class="cursor-line" id="cursorLine">
+    <span class="cursor"></span>
+  </div>
 </div>
 
 <div class="bottom-bar">
@@ -284,7 +354,7 @@ function onLangChange(lang) {
 }
 
 function doCopy() {
-  const segments = document.querySelectorAll('#transcript .segment');
+  const segments = document.querySelectorAll('#transcript .segment-text');
   const text = Array.from(segments).map(s => s.textContent).join('\n');
   send({ action: 'copyAll', text: text });
 }
@@ -307,8 +377,27 @@ function appendText(text) {
   const el = document.getElementById('transcript');
   const seg = document.createElement('div');
   seg.className = 'segment';
-  seg.textContent = text;
-  el.appendChild(seg);
+
+  const btn = document.createElement('button');
+  btn.className = 'copy-btn';
+  btn.title = '复制';
+  btn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
+  btn.onclick = function() {
+    const t = this.nextElementSibling.textContent;
+    send({ action: 'copyAll', text: t });
+  };
+
+  const span = document.createElement('span');
+  span.className = 'segment-text';
+  span.contentEditable = 'true';
+  span.textContent = text;
+
+  seg.appendChild(btn);
+  seg.appendChild(span);
+
+  // 光标行始终保持在末尾
+  const cursorLine = document.getElementById('cursorLine');
+  el.insertBefore(seg, cursorLine);
   el.scrollTop = el.scrollHeight;
 }
 
@@ -316,12 +405,15 @@ function setRecording(state) {
   recording = state;
   const btn = document.getElementById('recordBtn');
   const label = document.getElementById('recordLabel');
+  const cursorLine = document.getElementById('cursorLine');
   if (state) {
     btn.classList.add('recording');
     label.textContent = '停止录音';
+    cursorLine.classList.add('recording');
   } else {
     btn.classList.remove('recording');
     label.textContent = '开始录音';
+    cursorLine.classList.remove('recording');
   }
 }
 
@@ -330,8 +422,7 @@ function setModelLoaded(loaded) {
 }
 
 function clearTranscript() {
-  const el = document.getElementById('transcript');
-  el.querySelectorAll('.segment').forEach(s => s.remove());
+  document.querySelectorAll('#transcript .segment').forEach(s => s.remove());
   const empty = document.getElementById('emptyState');
   if (empty) empty.style.display = '';
   hasContent = false;
@@ -368,6 +459,16 @@ function initLanguages(langs, currentLang) {
     sel.appendChild(opt);
   });
 }
+
+// 编辑 segment 时隐藏自定义光标，避免双光标
+document.getElementById('transcript').addEventListener('focusin', e => {
+  if (e.target.classList.contains('segment-text'))
+    document.getElementById('cursorLine').classList.add('editing');
+});
+document.getElementById('transcript').addEventListener('focusout', e => {
+  if (e.target.classList.contains('segment-text'))
+    document.getElementById('cursorLine').classList.remove('editing');
+});
 </script>
 </body>
 </html>
