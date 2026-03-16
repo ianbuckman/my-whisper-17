@@ -20,7 +20,7 @@ all_hiddenimports = (
     + collect_submodules('numpy')
     + [
         'objc', 'AppKit', 'Foundation', 'PyObjCTools', 'PyObjCTools.AppHelper',
-        'Cocoa', 'CoreFoundation',
+        'Cocoa', 'CoreFoundation', 'WebKit',
     ]
 )
 
@@ -28,7 +28,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=all_binaries,
-    datas=all_datas,
+    datas=all_datas + [('ui.html', '.')],
     hiddenimports=all_hiddenimports,
     hookspath=[],
     hooksconfig={},
