@@ -12,11 +12,8 @@ macOS 本地实时语音转文字工具。基于 [MLX Whisper](https://github.co
 
 1. 前往 [Releases](../../releases) 页面，下载最新的 `My.Whisper.dmg`
 2. 双击打开 DMG，将 **My Whisper** 拖入 Applications 文件夹
-3. 首次打开前，在终端执行以下命令移除系统隔离标记：
-   ```bash
-   xattr -cr /Applications/My\ Whisper.app
-   ```
-4. 双击打开 My Whisper 即可使用
+
+3. 双击打开 My Whisper 即可使用
 
 > 应用已内嵌 whisper-large-v3-turbo 模型，无需联网下载，开箱即用。
 
