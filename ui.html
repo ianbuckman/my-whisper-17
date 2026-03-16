@@ -395,7 +395,6 @@ function appendText(text) {
 
   const span = document.createElement('span');
   span.className = 'segment-text';
-  span.contentEditable = 'true';
   span.textContent = text;
 
   seg.appendChild(btn);
@@ -466,14 +465,20 @@ function initLanguages(langs, currentLang) {
   });
 }
 
-// 编辑 segment 时隐藏自定义光标，避免双光标
-document.getElementById('transcript').addEventListener('focusin', e => {
-  if (e.target.classList.contains('segment-text'))
+// 双击进入编辑模式，点击其他地方退出
+document.getElementById('transcript').addEventListener('dblclick', e => {
+  const seg = e.target.closest('.segment-text');
+  if (seg) {
+    seg.contentEditable = 'true';
+    seg.focus();
     document.getElementById('cursorLine').classList.add('editing');
+  }
 });
 document.getElementById('transcript').addEventListener('focusout', e => {
-  if (e.target.classList.contains('segment-text'))
+  if (e.target.classList.contains('segment-text')) {
+    e.target.contentEditable = 'false';
     document.getElementById('cursorLine').classList.remove('editing');
+  }
 });
 </script>
 </body>
