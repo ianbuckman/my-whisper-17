@@ -4,6 +4,7 @@
 快捷键 ⌘⇧Space 开始/停止录音，实时转写显示在文本窗口中。
 """
 
+import json
 import re
 import sys
 import os
@@ -48,9 +49,10 @@ except Exception as e:
 try:
     import objc
     import AppKit
-    log.info("import objc/AppKit OK")
+    import WebKit
+    log.info("import objc/AppKit/WebKit OK")
 except Exception as e:
-    log.error("import objc/AppKit FAILED: %s", e)
+    log.error("import objc/AppKit/WebKit FAILED: %s", e)
     sys.exit(1)
 
 from AppKit import (
@@ -58,11 +60,6 @@ from AppKit import (
     NSMenu,
     NSMenuItem,
     NSWindow,
-    NSTextView,
-    NSScrollView,
-    NSButton,
-    NSFont,
-    NSColor,
     NSMakeRect,
     NSMakeSize,
     NSWindowStyleMaskTitled,
@@ -72,14 +69,11 @@ from AppKit import (
     NSBackingStoreBuffered,
     NSViewWidthSizable,
     NSViewHeightSizable,
-    NSViewMaxYMargin,
-    NSOnState,
-    NSOffState,
-    NSBezelStyleToolbar,
-    NSControlSizeRegular,
+    NSSound,
 )
-from Foundation import NSObject, NSLog
+from Foundation import NSObject, NSLog, NSURL
 from PyObjCTools import AppHelper
+from WebKit import WKWebView, WKWebViewConfiguration, WKUserContentController
 
 
 # ─── 配置 ────────────────────────────────────────────────────────────────────
@@ -102,6 +96,14 @@ NSEventMaskKeyDown = 1 << 10
 NSEventModifierFlagCommand = 1 << 20
 NSEventModifierFlagShift = 1 << 17
 
+MODELS = [
+    ("mlx-community/whisper-tiny", "Tiny (39M)"),
+    ("mlx-community/whisper-base", "Base (74M)"),
+    ("mlx-community/whisper-small", "Small (244M)"),
+    ("mlx-community/whisper-medium", "Medium (769M)"),
+    ("mlx-community/whisper-large-v3-turbo", "Large V3 Turbo (809M)"),
+]
+
 LANGUAGES = [
     ("zh", "中文"),
     ("en", "English"),
@@ -118,6 +120,31 @@ HALLUCINATION_MARKERS = [
 ]
 
 
+# ─── 资源路径 ────────────────────────────────────────────────────────────────
+
+def _get_resource_path(filename):
+    """获取资源文件路径（兼容 PyInstaller 打包和开发环境）"""
+    if getattr(sys, '_MEIPASS', None):
+        return os.path.join(sys._MEIPASS, filename)
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
+
+
+# ─── WKScriptMessageHandler ──────────────────────────────────────────────────
+
+class _BridgeHandler(NSObject):
+    """独立的 WKScriptMessageHandler，转发消息给 AppDelegate"""
+
+    def initWithDelegate_(self, delegate):
+        self = objc.super(_BridgeHandler, self).init()
+        if self is None:
+            return None
+        self.delegate = delegate
+        return self
+
+    def userContentController_didReceiveScriptMessage_(self, controller, message):
+        self.delegate.handleBridgeMessage_(message.body())
+
+
 # ─── App Delegate ────────────────────────────────────────────────────────────
 
 class AppDelegate(NSObject):
@@ -130,10 +157,19 @@ class AppDelegate(NSObject):
         self.stream = None
         self.model = self._args.model
         self.language = self._args.language if self._args.language != "auto" else None
+        self._web_loaded = False
+        self._pending_js = []
 
-        self._setup_main_menu()
-        self._setup_window()
-        self._setup_hotkey()
+        try:
+            self._setup_main_menu()
+            log.info("_setup_main_menu 完成")
+            self._setup_window()
+            log.info("_setup_window 完成")
+            self._setup_hotkey()
+            log.info("_setup_hotkey 完成")
+        except Exception as e:
+            log.error("初始化失败: %s", e, exc_info=True)
+            return
 
         # 启动时显示窗口
         self.window.makeKeyAndOrderFront_(None)
@@ -141,6 +177,66 @@ class AppDelegate(NSObject):
 
         self._load_model()
         log.info("初始化完成")
+
+    # ── JS 桥接 ────────────────────────────────────────────────────────────
+
+    def _eval_js(self, js):
+        """执行 JavaScript，如果页面未加载完则排队"""
+        if not self._web_loaded:
+            self._pending_js.append(js)
+            return
+        self.webview.evaluateJavaScript_completionHandler_(js, None)
+
+    def _init_web_ui(self):
+        """页面加载完成后初始化 UI 数据"""
+        models_json = json.dumps(MODELS)
+        model_val = json.dumps(self.model)
+        langs_json = json.dumps(LANGUAGES)
+        lang_val = json.dumps(self.language)
+        self._eval_js(f"initModels({models_json}, {model_val})")
+        self._eval_js(f"initLanguages({langs_json}, {lang_val})")
+        if self.model_loaded:
+            self._eval_js("updateStatus('就绪')")
+            self._eval_js("setModelLoaded(true)")
+        else:
+            self._eval_js("updateStatus('加载模型中...')")
+
+    # ── WKNavigationDelegate ──────────────────────────────────────────────
+
+    def webView_didFinishNavigation_(self, webview, navigation):
+        log.info("WebView 加载完成")
+        self._web_loaded = True
+        self._init_web_ui()
+        for js in self._pending_js:
+            self.webview.evaluateJavaScript_completionHandler_(js, None)
+        self._pending_js = []
+
+    # ── JS → Python 消息处理 ────────────────────────────────────────────
+
+    def handleBridgeMessage_(self, body):
+        action = body.get("action", "")
+        log.info("JS bridge: %s", action)
+
+        if action == "startRecording":
+            self._start_recording()
+        elif action == "stopRecording":
+            self._stop_recording()
+        elif action == "changeModel":
+            self._change_model(body.get("model", ""))
+        elif action == "changeLanguage":
+            lang = body.get("language", "")
+            self.language = lang if lang else None
+            log.info("语言切换为: %s", self.language)
+        elif action == "copyAll":
+            text = body.get("text", "")
+            pb = AppKit.NSPasteboard.generalPasteboard()
+            pb.clearContents()
+            pb.setString_forType_(text, AppKit.NSPasteboardTypeString)
+            self._eval_js("showToast('已复制到剪贴板')")
+        elif action == "clearText":
+            log.info("文本已清空")
+        elif action == "quit":
+            self.quitApp_(None)
 
     # ── 主菜单（让 Cmd+C/V/A 等标准快捷键生效）─────────────────────────────
 
@@ -169,23 +265,9 @@ class AppDelegate(NSObject):
         edit_item.setSubmenu_(edit_menu)
         main_menu.addItem_(edit_item)
 
-        # 语言菜单
-        lang_item = NSMenuItem.alloc().init()
-        self.lang_menu = NSMenu.alloc().initWithTitle_("语言")
-        for code, name in LANGUAGES:
-            li = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-                name, "setLanguage:", ""
-            )
-            li.setRepresentedObject_(code)
-            if code == self.language:
-                li.setState_(NSOnState)
-            self.lang_menu.addItem_(li)
-        lang_item.setSubmenu_(self.lang_menu)
-        main_menu.addItem_(lang_item)
-
         NSApplication.sharedApplication().setMainMenu_(main_menu)
 
-    # ── 窗口（带工具栏按钮）───────────────────────────────────────────────
+    # ── 窗口（WKWebView）─────────────────────────────────────────────────
 
     def _setup_window(self):
         style = (
@@ -203,86 +285,26 @@ class AppDelegate(NSObject):
         self.window.setReleasedWhenClosed_(False)
         self.window.setFrameAutosaveName_("MyWhisperMainWindow")
 
+        # 创建 WKWebView
+        config = WKWebViewConfiguration.alloc().init()
+        controller = config.userContentController()
+        self._bridge_handler = _BridgeHandler.alloc().initWithDelegate_(self)
+        controller.addScriptMessageHandler_name_(self._bridge_handler, "bridge")
+
         content = self.window.contentView()
-        content_frame = content.frame()
-        w = content_frame.size.width
-        h = content_frame.size.height
-
-        # ── 工具栏区域（顶部 40px）──
-        toolbar_h = 40
-        toolbar_y = h - toolbar_h
-
-        # 录音按钮
-        self.record_btn = NSButton.alloc().initWithFrame_(
-            NSMakeRect(10, toolbar_y + 6, 180, 28)
+        self.webview = WKWebView.alloc().initWithFrame_configuration_(
+            content.bounds(), config
         )
-        self.record_btn.setTitle_("开始录音 ⌘⇧Space")
-        self.record_btn.setBezelStyle_(NSBezelStyleToolbar)
-        self.record_btn.setTarget_(self)
-        self.record_btn.setAction_("toggleRecording:")
-        self.record_btn.setAutoresizingMask_(NSViewMaxYMargin)
-        content.addSubview_(self.record_btn)
+        self.webview.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable)
+        self.webview.setNavigationDelegate_(self)
+        content.addSubview_(self.webview)
 
-        # 复制按钮
-        copy_btn = NSButton.alloc().initWithFrame_(
-            NSMakeRect(w - 130, toolbar_y + 6, 55, 28)
+        # 加载 HTML
+        html_path = _get_resource_path("ui.html")
+        html_url = NSURL.fileURLWithPath_(html_path)
+        self.webview.loadFileURL_allowingReadAccessToURL_(
+            html_url, html_url.URLByDeletingLastPathComponent()
         )
-        copy_btn.setTitle_("复制")
-        copy_btn.setBezelStyle_(NSBezelStyleToolbar)
-        copy_btn.setTarget_(self)
-        copy_btn.setAction_("copyAll:")
-        copy_btn.setAutoresizingMask_(NSViewMaxYMargin)
-        content.addSubview_(copy_btn)
-
-        # 清空按钮
-        clear_btn = NSButton.alloc().initWithFrame_(
-            NSMakeRect(w - 65, toolbar_y + 6, 55, 28)
-        )
-        clear_btn.setTitle_("清空")
-        clear_btn.setBezelStyle_(NSBezelStyleToolbar)
-        clear_btn.setTarget_(self)
-        clear_btn.setAction_("clearText:")
-        clear_btn.setAutoresizingMask_(NSViewMaxYMargin)
-        content.addSubview_(clear_btn)
-
-        # 状态标签
-        self.status_label = AppKit.NSTextField.labelWithString_("加载模型中...")
-        self.status_label.setFrame_(NSMakeRect(200, toolbar_y + 10, 300, 20))
-        self.status_label.setFont_(NSFont.systemFontOfSize_(12))
-        self.status_label.setTextColor_(NSColor.secondaryLabelColor())
-        self.status_label.setAutoresizingMask_(NSViewMaxYMargin)
-        content.addSubview_(self.status_label)
-
-        # ── 文本区域 ──
-        text_frame = NSMakeRect(0, 0, w, toolbar_y)
-        scroll = NSScrollView.alloc().initWithFrame_(text_frame)
-        scroll.setHasVerticalScroller_(True)
-        scroll.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable)
-
-        text_size = scroll.contentSize()
-        self.text_view = NSTextView.alloc().initWithFrame_(
-            NSMakeRect(0, 0, text_size.width, text_size.height)
-        )
-        self.text_view.setMinSize_(NSMakeSize(0, text_size.height))
-        self.text_view.setMaxSize_(NSMakeSize(1e7, 1e7))
-        self.text_view.setVerticallyResizable_(True)
-        self.text_view.setHorizontallyResizable_(False)
-        self.text_view.setAutoresizingMask_(NSViewWidthSizable)
-        self.text_view.textContainer().setWidthTracksTextView_(True)
-
-        font = NSFont.fontWithName_size_("PingFang SC", 16)
-        if not font:
-            font = NSFont.systemFontOfSize_(16)
-        self.text_view.setFont_(font)
-        self.text_view.setEditable_(True)
-        self.text_view.setSelectable_(True)
-        self.text_view.setRichText_(False)
-        self.text_view.setTextContainerInset_(NSMakeSize(10, 10))
-        self.text_view.setAllowsUndo_(True)
-
-        scroll.setDocumentView_(self.text_view)
-        content.addSubview_(scroll)
-        self.window.setInitialFirstResponder_(self.text_view)
 
     # ── 全局快捷键 ──────────────────────────────────────────────────────────
 
@@ -333,12 +355,28 @@ class AppDelegate(NSObject):
         threading.Thread(target=load, daemon=True).start()
 
     def onModelLoaded_(self, _):
-        self.status_label.setStringValue_("就绪")
+        self._eval_js("updateStatus('就绪')")
+        self._eval_js("setModelLoaded(true)")
         self.window.setTitle_("My Whisper")
         log.info("模型加载完成")
 
     def onModelError_(self, error_msg):
-        self.status_label.setStringValue_(f"模型加载失败: {error_msg}")
+        escaped = json.dumps(f"模型加载失败: {error_msg}")
+        self._eval_js(f"updateStatus({escaped})")
+
+    def _change_model(self, model_repo):
+        """切换 Whisper 模型"""
+        if model_repo == self.model:
+            return
+        if self.is_recording:
+            self._stop_recording()
+        self.model = model_repo
+        self.model_loaded = False
+        self._eval_js("setModelLoaded(false)")
+        self._eval_js("updateStatus('加载模型中...')")
+        self.window.setTitle_("My Whisper — 加载模型中...")
+        log.info("切换模型: %s", model_repo)
+        self._load_model()
 
     # ── 录音控制 ────────────────────────────────────────────────────────────
 
@@ -352,10 +390,17 @@ class AppDelegate(NSObject):
             self._start_recording()
 
     def _start_recording(self):
+        if not self.model_loaded:
+            return
         self.is_recording = True
-        self.record_btn.setTitle_("停止录音 ⌘⇧Space")
-        self.status_label.setStringValue_("录音中...")
+        self._eval_js("setRecording(true)")
+        self._eval_js("updateStatus('录音中...')")
         self.window.setTitle_("My Whisper — 录音中...")
+
+        # 播放提示音
+        sound = NSSound.soundNamed_("Tink")
+        if sound:
+            sound.play()
 
         self.window.makeKeyAndOrderFront_(None)
         NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
@@ -372,7 +417,8 @@ class AppDelegate(NSObject):
             self.stream.start()
         except Exception as e:
             log.error("麦克风启动失败: %s", e)
-            self.status_label.setStringValue_(f"麦克风错误: {e}")
+            escaped = json.dumps(f"麦克风错误: {e}")
+            self._eval_js(f"updateStatus({escaped})")
             self._stop_recording()
             return
 
@@ -384,8 +430,13 @@ class AppDelegate(NSObject):
             self.stream.stop()
             self.stream.close()
             self.stream = None
-        self.record_btn.setTitle_("开始录音 ⌘⇧Space")
+        self._eval_js("setRecording(false)")
         self.window.setTitle_("My Whisper")
+
+        # 播放提示音
+        sound = NSSound.soundNamed_("Pop")
+        if sound:
+            sound.play()
 
     def _audio_callback(self, indata, frames, time, status):
         self.audio_queue.put(indata.copy().flatten())
@@ -488,45 +539,20 @@ class AppDelegate(NSObject):
     # ── UI 更新（主线程） ───────────────────────────────────────────────────
 
     def appendText_(self, text):
-        storage = self.text_view.textStorage()
-        current = storage.string()
-        if current and len(current) > 0:
-            storage.mutableString().appendString_(text)
-        else:
-            storage.mutableString().appendString_(text)
-        end = storage.length()
-        self.text_view.scrollRangeToVisible_((end, 0))
+        escaped = json.dumps(text)
+        self._eval_js(f"appendText({escaped})")
 
     def onTranscribeStatus_(self, status):
         if self.is_recording:
-            self.status_label.setStringValue_(status)
+            escaped = json.dumps(status)
+            self._eval_js(f"updateStatus({escaped})")
             self.window.setTitle_(f"My Whisper — {status}")
 
     def onTranscribeFinished_(self, _):
-        self.status_label.setStringValue_("就绪")
+        self._eval_js("updateStatus('就绪')")
         self.window.setTitle_("My Whisper")
 
     # ── 菜单操作 ────────────────────────────────────────────────────────────
-
-    @objc.IBAction
-    def clearText_(self, sender):
-        self.text_view.textStorage().mutableString().setString_("")
-
-    @objc.IBAction
-    def copyAll_(self, sender):
-        text = self.text_view.textStorage().string()
-        pb = AppKit.NSPasteboard.generalPasteboard()
-        pb.clearContents()
-        pb.setString_forType_(text, AppKit.NSPasteboardTypeString)
-        self.status_label.setStringValue_("已复制到剪贴板")
-
-    @objc.IBAction
-    def setLanguage_(self, sender):
-        self.language = sender.representedObject()
-        for i in range(self.lang_menu.numberOfItems()):
-            self.lang_menu.itemAtIndex_(i).setState_(NSOffState)
-        sender.setState_(NSOnState)
-        log.info("语言切换为: %s", sender.title())
 
     @objc.IBAction
     def quitApp_(self, sender):
@@ -537,6 +563,11 @@ class AppDelegate(NSObject):
         NSApplication.sharedApplication().terminate_(None)
 
     def applicationShouldTerminateAfterLastWindowClosed_(self, app):
+        return False
+
+    def applicationShouldHandleReopen_hasVisibleWindows_(self, app, hasVisibleWindows):
+        if not hasVisibleWindows:
+            self.window.makeKeyAndOrderFront_(None)
         return True
 
 
