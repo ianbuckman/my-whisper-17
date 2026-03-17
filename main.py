@@ -86,7 +86,6 @@ SAMPLE_RATE = 16000
 BLOCK_DURATION = 0.1
 BLOCK_SIZE = int(SAMPLE_RATE * BLOCK_DURATION)
 
-SILENCE_THRESHOLD = 0.01
 SPEECH_THRESHOLD = 0.015
 SILENCE_DURATION = 0.8
 MAX_SEGMENT_SECS = 15
@@ -120,8 +119,8 @@ LANGUAGES = [
 HALLUCINATION_MARKERS = [
     "谢谢观看", "字幕由", "请不吝点赞", "Amara",
     "Subscribe", "Thank you for watching",
-    "construction", "Copyright", "copyright",
-    "字幕", "小鑫", "感谢收看",
+    "Copyright", "copyright",
+    "感谢收看",
 ]
 
 
@@ -537,11 +536,14 @@ class AppDelegate(NSObject):
             rms = np.sqrt(np.mean(chunk ** 2))
             if rms >= SPEECH_THRESHOLD:
                 has_speech = True
-            silence_n = silence_n + 1 if rms < SILENCE_THRESHOLD else 0
+            silence_n = silence_n + 1 if rms < SPEECH_THRESHOLD else 0
 
             if len(buf) >= min_chunks and (silence_n >= sil_threshold or len(buf) >= max_chunks):
                 if has_speech:
                     self._do_transcribe(buf)
+                else:
+                    log.debug("丢弃无语音段落: %d chunks, max_rms=%.4f", len(buf),
+                              max(np.sqrt(np.mean(c ** 2)) for c in buf))
                 buf, silence_n, has_speech = [], 0, False
 
         if len(buf) >= min_chunks and has_speech:
@@ -552,9 +554,17 @@ class AppDelegate(NSObject):
         )
 
     def _do_transcribe(self, buf):
+        # 裁掉尾部静默，保留最多 2 个静默块作为自然结尾
+        tail_silence = 0
+        for chunk in reversed(buf):
+            if np.sqrt(np.mean(chunk ** 2)) < SPEECH_THRESHOLD:
+                tail_silence += 1
+            else:
+                break
+        trim = max(0, tail_silence - 2)
+        if trim > 0:
+            buf = buf[:-trim]
         audio = np.concatenate(buf)
-        if np.sqrt(np.mean(audio ** 2)) < SPEECH_THRESHOLD:
-            return
 
         self.performSelectorOnMainThread_withObject_waitUntilDone_(
             "onTranscribeStatus:", "转写中...", False
@@ -581,6 +591,10 @@ class AppDelegate(NSObject):
                 if t:
                     valid_texts.append(t)
 
+        if segments and not valid_texts:
+            log.debug("所有 segment 被 no_speech_prob 过滤: %s",
+                      [(s.get("text", "").strip(), f'{s.get("no_speech_prob", 0):.2f}') for s in segments])
+
         text = "".join(valid_texts).strip()
         if text and not self._is_hallucination(text):
             self._last_transcript_time = time.time()
@@ -599,7 +613,7 @@ class AppDelegate(NSObject):
             if marker.lower() in lower:
                 return True
 
-        for length in range(1, max(2, len(text) // 3 + 1)):
+        for length in range(2, max(3, len(text) // 3 + 1)):
             pattern = text[:length]
             if len(pattern.strip()) == 0:
                 continue

@@ -64,6 +64,21 @@ cp "$PROJECT_DIR/ui.html"  "$APP_DIR/Contents/Resources/ui.html"
 echo "复制 venv（请稍候）..."
 cp -rL "$PROJECT_DIR/venv" "$APP_DIR/Contents/Resources/venv"
 
+# ── 内嵌默认模型 ─────────────────────────────────────────────────────────────
+MODEL_NAME="whisper-large-v3-turbo"
+MODEL_CACHE="$HOME/.cache/huggingface/hub/models--mlx-community--${MODEL_NAME}"
+MODEL_SNAP=$(ls -d "$MODEL_CACHE/snapshots/"*/ 2>/dev/null | head -1)
+
+if [ -n "$MODEL_SNAP" ]; then
+    echo "内嵌模型 $MODEL_NAME ..."
+    MODEL_DEST="$APP_DIR/Contents/Resources/models/$MODEL_NAME"
+    mkdir -p "$MODEL_DEST"
+    cp -rL "$MODEL_SNAP"/* "$MODEL_DEST/"
+    echo "模型已复制: $(du -sh "$MODEL_DEST" | cut -f1)"
+else
+    echo "⚠ 未找到模型缓存: $MODEL_CACHE，跳过内嵌"
+fi
+
 # ── 生成应用图标 ─────────────────────────────────────────────────────────────
 echo "生成应用图标..."
 ICNS_PATH="$APP_DIR/Contents/Resources/AppIcon.icns"
