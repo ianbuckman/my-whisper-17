@@ -38,6 +38,8 @@ from config import (
     NSEventMaskKeyDown,
     NSEventModifierFlagCommand,
     NSEventModifierFlagShift,
+    NSEventModifierFlagOption,
+    NSEventModifierFlagControl,
     get_resource_path,
 )
 from transcriber import Transcriber
@@ -275,9 +277,9 @@ class AppDelegate(NSObject):
         if carbon_mods & 0x0200:  # shiftKey
             ns_flags |= NSEventModifierFlagShift
         if carbon_mods & 0x0800:  # optionKey
-            ns_flags |= 1 << 19  # NSEventModifierFlagOption
+            ns_flags |= NSEventModifierFlagOption
         if carbon_mods & 0x1000:  # controlKey
-            ns_flags |= 1 << 18  # NSEventModifierFlagControl
+            ns_flags |= NSEventModifierFlagControl
 
         def check_hotkey(event):
             flags = event.modifierFlags()

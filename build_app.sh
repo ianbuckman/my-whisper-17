@@ -45,6 +45,8 @@ cat > "$APP_DIR/Contents/Info.plist" << 'PLIST'
     <string>My Whisper 需要访问麦克风来录制语音并转写为文字。</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>LSUIElement</key>
+    <true/>
 </dict>
 </plist>
 PLIST
@@ -186,5 +188,4 @@ echo "    2. 拖到 Dock 栏固定"
 echo "    3. 拖到 /Applications 文件夹"
 echo ""
 echo "  首次启动需要在 系统设置 → 隐私与安全 中授权:"
-echo "    - 辅助功能（全局快捷键）"
 echo "    - 麦克风（录音）"

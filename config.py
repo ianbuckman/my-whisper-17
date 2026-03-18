@@ -45,6 +45,8 @@ LANGUAGES = [
 NSEventMaskKeyDown = 1 << 10
 NSEventModifierFlagCommand = 1 << 20
 NSEventModifierFlagShift = 1 << 17
+NSEventModifierFlagOption = 1 << 19
+NSEventModifierFlagControl = 1 << 18
 
 # ─── 幻觉标记 ─────────────────────────────────────────────────────────────────
 

@@ -57,6 +57,41 @@ macOS 本地实时语音转文字工具。基于 [MLX Whisper](https://github.co
 | `⌘⇧Space`（默认，可自定义） | 开始 / 停止录音（全局） |
 | `⌘Q` | 退出 |
 
+## 构建
+
+### 开发模式（推荐开发调试）
+
+```bash
+./setup.sh              # 首次：创建 venv + 安装依赖
+source venv/bin/activate
+python main.py
+```
+
+直接运行 Python 脚本，Dock 会显示 Python 图标（正常行为）。首次运行自动下载模型。
+
+### py2app 构建（推荐分发）
+
+```bash
+venv/bin/python setup.py py2app
+```
+
+输出 `dist/My Whisper.app`。构建后需手动复制 mlx（namespace package，py2app 无法自动扫描）：
+
+```bash
+cp -r venv/lib/python3.14/site-packages/mlx \
+      dist/My\ Whisper.app/Contents/Resources/lib/python3.14/mlx
+```
+
+此方式正确设置了 `LSUIElement`，App 仅在菜单栏显示图标，不出现在 Dock 中。
+
+### build_app.sh（轻量构建）
+
+```bash
+./build_app.sh
+```
+
+编译 Objective-C launcher + 复制 venv 到 `.app` bundle，产物在项目根目录 `My Whisper.app`。构建速度快，适合本地快速测试。自动内嵌已下载的模型。
+
 ## 日志
 
 运行日志位于 `~/Library/Logs/my-whisper.log`，遇到问题时可查看排查。
