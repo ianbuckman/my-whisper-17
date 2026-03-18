@@ -38,9 +38,13 @@ from config import (
     NSEventMaskKeyDown,
     NSEventModifierFlagCommand,
     NSEventModifierFlagShift,
+    NSEventModifierFlagOption,
+    NSEventModifierFlagControl,
     get_resource_path,
 )
 from transcriber import Transcriber
+from hotkey import GlobalHotkey, format_shortcut
+from settings import Settings
 
 log = logging.getLogger("mywhisper")
 
@@ -127,6 +131,9 @@ class AppDelegate(NSObject):
         lang_val = json.dumps(self.transcriber.language)
         self._eval_js(f"initModels({models_json}, {model_val})")
         self._eval_js(f"initLanguages({langs_json}, {lang_val})")
+        shortcut_str = format_shortcut(
+            int(self._settings.shortcut_keycode), int(self._settings.shortcut_modifiers))
+        self._eval_js(f"updateShortcutDisplay({json.dumps(shortcut_str)})")
         if self.transcriber.model_loaded:
             self._eval_js("updateStatus('就绪')")
             self._eval_js("setModelLoaded(true)")
@@ -165,6 +172,10 @@ class AppDelegate(NSObject):
             pb.clearContents()
             pb.setString_forType_(text, AppKit.NSPasteboardTypeString)
             self._eval_js("showToast('已复制到剪贴板')")
+        elif action == "changeShortcut":
+            key_code = int(body.get("keyCode", 0))
+            modifiers = int(body.get("modifiers", 0))
+            self._update_hotkey(key_code, modifiers)
         elif action == "clearText":
             log.info("文本已清空")
         elif action == "quit":
@@ -237,11 +248,42 @@ class AppDelegate(NSObject):
     # ── 全局快捷键 ──────────────────────────────────────────────────────────
 
     def _setup_hotkey(self):
-        required_flags = NSEventModifierFlagCommand | NSEventModifierFlagShift
+        self._settings = Settings()
+        self._global_hotkey = GlobalHotkey(
+            callback=lambda: self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                "toggleRecording:", None, False
+            )
+        )
+
+        key_code = int(self._settings.shortcut_keycode)
+        modifiers = int(self._settings.shortcut_modifiers)
+
+        self._is_fallback = False
+        if self._global_hotkey.register(key_code, modifiers):
+            log.info("Carbon global hotkey registered")
+        else:
+            log.warning("Carbon hotkey failed, falling back to NSEvent monitors")
+            self._is_fallback = True
+            self._setup_hotkey_fallback()
+
+    def _setup_hotkey_fallback(self):
+        """NSEvent 方式的后备全局快捷键（需要辅助功能权限）"""
+        key_code = int(self._settings.shortcut_keycode)
+        carbon_mods = int(self._settings.shortcut_modifiers)
+        # 将 Carbon modifier 转为 NSEvent modifier
+        ns_flags = 0
+        if carbon_mods & 0x0100:  # cmdKey
+            ns_flags |= NSEventModifierFlagCommand
+        if carbon_mods & 0x0200:  # shiftKey
+            ns_flags |= NSEventModifierFlagShift
+        if carbon_mods & 0x0800:  # optionKey
+            ns_flags |= NSEventModifierFlagOption
+        if carbon_mods & 0x1000:  # controlKey
+            ns_flags |= NSEventModifierFlagControl
 
         def check_hotkey(event):
             flags = event.modifierFlags()
-            return (flags & required_flags) == required_flags and event.keyCode() == 49
+            return (flags & ns_flags) == ns_flags and event.keyCode() == key_code
 
         AppKit.NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(
             NSEventMaskKeyDown,
@@ -261,6 +303,33 @@ class AppDelegate(NSObject):
                 ) or True
             ) else event,
         )
+
+    def _update_hotkey(self, key_code, carbon_modifiers):
+        """用户更改快捷键"""
+        if self._is_fallback:
+            self._eval_js("showToast('当前模式不支持自定义快捷键')")
+            return
+
+        key_code = int(key_code)
+        carbon_modifiers = int(carbon_modifiers)
+        old_kc = int(self._settings.shortcut_keycode)
+        old_mod = int(self._settings.shortcut_modifiers)
+
+        if self._global_hotkey.register(key_code, carbon_modifiers):
+            self._settings.shortcut_keycode = key_code
+            self._settings.shortcut_modifiers = carbon_modifiers
+            shortcut_str = format_shortcut(key_code, carbon_modifiers)
+            self._eval_js(f"updateShortcutDisplay({json.dumps(shortcut_str)})")
+            self._eval_js(f"showToast({json.dumps('快捷键已更新为 ' + shortcut_str)})")
+        else:
+            # 注册失败，恢复旧快捷键
+            if not self._global_hotkey.register(old_kc, old_mod):
+                log.error("恢复旧快捷键也失败，App 处于无快捷键状态")
+                self._eval_js("showToast('快捷键注册失败，请重启 App')")
+            else:
+                self._eval_js("showToast('快捷键冲突，请选择其他组合')")
+            shortcut_str = format_shortcut(old_kc, old_mod)
+            self._eval_js(f"updateShortcutDisplay({json.dumps(shortcut_str)})")
 
     # ── 菜单栏图标 ─────────────────────────────────────────────────────────
 
@@ -416,6 +485,8 @@ class AppDelegate(NSObject):
     def quitApp_(self, sender):
         self.is_recording = False
         self.transcriber.stop()
+        if hasattr(self, '_global_hotkey'):
+            self._global_hotkey.unregister()
         if self.stream:
             self.stream.stop()
             self.stream.close()

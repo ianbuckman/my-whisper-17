@@ -45,6 +45,8 @@ cat > "$APP_DIR/Contents/Info.plist" << 'PLIST'
     <string>My Whisper 需要访问麦克风来录制语音并转写为文字。</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>LSUIElement</key>
+    <true/>
 </dict>
 </plist>
 PLIST
@@ -61,6 +63,8 @@ cp "$PROJECT_DIR/main.py"         "$APP_DIR/Contents/Resources/main.py"
 cp "$PROJECT_DIR/config.py"       "$APP_DIR/Contents/Resources/config.py"
 cp "$PROJECT_DIR/app_delegate.py" "$APP_DIR/Contents/Resources/app_delegate.py"
 cp "$PROJECT_DIR/transcriber.py"  "$APP_DIR/Contents/Resources/transcriber.py"
+cp "$PROJECT_DIR/hotkey.py"       "$APP_DIR/Contents/Resources/hotkey.py"
+cp "$PROJECT_DIR/settings.py"     "$APP_DIR/Contents/Resources/settings.py"
 cp "$PROJECT_DIR/ui.html"         "$APP_DIR/Contents/Resources/ui.html"
 
 # ── 复制 venv（-L 解引用符号链接，避免 bundle 内悬空链接）──────────────────
@@ -184,5 +188,4 @@ echo "    2. 拖到 Dock 栏固定"
 echo "    3. 拖到 /Applications 文件夹"
 echo ""
 echo "  首次启动需要在 系统设置 → 隐私与安全 中授权:"
-echo "    - 辅助功能（全局快捷键）"
 echo "    - 麦克风（录音）"

@@ -26,7 +26,9 @@ macOS 本地实时语音转文字工具。基于 [MLX Whisper](https://github.co
 
 ### 录音转写
 
-按下 `⌘⇧Space`（或点击窗口中的"开始录音"按钮）开始录音，再次按下停止。App 会自动检测语音停顿并分段转写，结果实时显示在窗口中。15 秒无新转录会自动停止录音。
+按下全局快捷键（默认 `⌘⇧Space`）或点击窗口中的"开始录音"按钮开始录音，再次按下停止。App 会自动检测语音停顿并分段转写，结果实时显示在窗口中。15 秒无新转录会自动停止录音。
+
+快捷键为系统级全局快捷键，无需聚焦窗口即可触发。点击工具栏中的快捷键按钮可自定义快捷键组合，设置会自动保存。
 
 ### 模型 & 语言切换
 
@@ -46,15 +48,53 @@ macOS 本地实时语音转文字工具。基于 [MLX Whisper](https://github.co
 
 | 权限 | 用途 |
 |------|------|
-| **辅助功能** | 全局快捷键 `⌘⇧Space` 监听 |
 | **麦克风** | 语音录制 |
 
 ## 快捷键
 
 | 快捷键 | 功能 |
 |--------|------|
-| `⌘⇧Space` | 开始 / 停止录音 |
+| `⌘⇧Space`（默认，可自定义） | 开始 / 停止录音（全局） |
 | `⌘Q` | 退出 |
+
+## 构建
+
+### 开发模式（推荐开发调试）
+
+```bash
+./setup.sh              # 首次：创建 venv + 安装依赖
+source venv/bin/activate
+python main.py
+```
+
+直接运行 Python 脚本，Dock 会显示 Python 图标（正常行为）。首次运行自动下载模型。
+
+### 构建 DMG 分发包（推荐）
+
+```bash
+# 1. 清理旧构建
+rm -rf build dist
+
+# 2. py2app 构建
+venv/bin/python setup.py py2app
+
+# 3. 复制 mlx（namespace package，py2app 无法自动扫描）
+cp -r venv/lib/python3.14/site-packages/mlx \
+      dist/My\ Whisper.app/Contents/Resources/lib/python3.14/mlx
+
+# 4. 内嵌默认模型（用户开箱即用）
+MODEL_SNAP=$(ls -d ~/.cache/huggingface/hub/models--mlx-community--whisper-large-v3-turbo/snapshots/*/ | head -1)
+mkdir -p "dist/My Whisper.app/Contents/Resources/models/whisper-large-v3-turbo"
+cp -rL "$MODEL_SNAP"/* "dist/My Whisper.app/Contents/Resources/models/whisper-large-v3-turbo/"
+
+# 5. 打包 DMG
+hdiutil create -volname "My Whisper" \
+  -srcfolder "dist/My Whisper.app" \
+  -ov -format UDZO My.Whisper.dmg
+```
+
+产物 `My.Whisper.dmg`（约 1.6G，含模型）。`LSUIElement` 已设置，App 仅在菜单栏显示图标，不出现在 Dock 中。
+
 
 ## 日志
 
