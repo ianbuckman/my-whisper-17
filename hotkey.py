@@ -3,7 +3,6 @@
 import ctypes
 import ctypes.util
 import logging
-import struct
 
 log = logging.getLogger("mywhisper")
 
@@ -71,6 +70,9 @@ _carbon.RegisterEventHotKey.argtypes = [
 
 _carbon.UnregisterEventHotKey.restype = ctypes.c_int32
 _carbon.UnregisterEventHotKey.argtypes = [ctypes.c_void_p]
+
+_carbon.RemoveEventHandler.restype = ctypes.c_int32
+_carbon.RemoveEventHandler.argtypes = [ctypes.c_void_p]
 
 # ─── Keycode → display name ──────────────────────────────────────────────────
 
@@ -167,10 +169,15 @@ class GlobalHotkey:
         return True
 
     def unregister(self):
-        """注销当前全局快捷键"""
+        """注销当前全局快捷键和事件处理器"""
+        had_registration = self._hotkey_ref is not None or self._handler_ref is not None
         if self._hotkey_ref is not None:
             _carbon.UnregisterEventHotKey(self._hotkey_ref)
             self._hotkey_ref = None
+        if self._handler_ref is not None:
+            _carbon.RemoveEventHandler(self._handler_ref)
+            self._handler_ref = None
+        if had_registration:
             log.info("Global hotkey unregistered")
 
     def _on_hotkey_event(self, handler_call_ref, event_ref, user_data):

@@ -1,10 +1,7 @@
 """My Whisper 用户设置持久化（NSUserDefaults）"""
 
 from Foundation import NSUserDefaults
-
-# Carbon modifier constants
-CMD_KEY = 0x0100
-SHIFT_KEY = 0x0200
+from hotkey import CMD_KEY, SHIFT_KEY
 
 DEFAULTS_KEY_KEYCODE = "shortcutKeyCode"
 DEFAULTS_KEY_MODIFIERS = "shortcutModifiers"

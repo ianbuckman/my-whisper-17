@@ -256,10 +256,12 @@ class AppDelegate(NSObject):
         key_code = int(self._settings.shortcut_keycode)
         modifiers = int(self._settings.shortcut_modifiers)
 
+        self._is_fallback = False
         if self._global_hotkey.register(key_code, modifiers):
             log.info("Carbon global hotkey registered")
         else:
             log.warning("Carbon hotkey failed, falling back to NSEvent monitors")
+            self._is_fallback = True
             self._setup_hotkey_fallback()
 
     def _setup_hotkey_fallback(self):
@@ -272,6 +274,10 @@ class AppDelegate(NSObject):
             ns_flags |= NSEventModifierFlagCommand
         if carbon_mods & 0x0200:  # shiftKey
             ns_flags |= NSEventModifierFlagShift
+        if carbon_mods & 0x0800:  # optionKey
+            ns_flags |= 1 << 19  # NSEventModifierFlagOption
+        if carbon_mods & 0x1000:  # controlKey
+            ns_flags |= 1 << 18  # NSEventModifierFlagControl
 
         def check_hotkey(event):
             flags = event.modifierFlags()
@@ -298,6 +304,10 @@ class AppDelegate(NSObject):
 
     def _update_hotkey(self, key_code, carbon_modifiers):
         """用户更改快捷键"""
+        if self._is_fallback:
+            self._eval_js("showToast('当前模式不支持自定义快捷键')")
+            return
+
         key_code = int(key_code)
         carbon_modifiers = int(carbon_modifiers)
         old_kc = int(self._settings.shortcut_keycode)
@@ -308,11 +318,14 @@ class AppDelegate(NSObject):
             self._settings.shortcut_modifiers = carbon_modifiers
             shortcut_str = format_shortcut(key_code, carbon_modifiers)
             self._eval_js(f"updateShortcutDisplay({json.dumps(shortcut_str)})")
-            self._eval_js(f"showToast('快捷键已更新为 {shortcut_str}')")
+            self._eval_js(f"showToast({json.dumps('快捷键已更新为 ' + shortcut_str)})")
         else:
             # 注册失败，恢复旧快捷键
-            self._global_hotkey.register(old_kc, old_mod)
-            self._eval_js("showToast('快捷键冲突，请选择其他组合')")
+            if not self._global_hotkey.register(old_kc, old_mod):
+                log.error("恢复旧快捷键也失败，App 处于无快捷键状态")
+                self._eval_js("showToast('快捷键注册失败，请重启 App')")
+            else:
+                self._eval_js("showToast('快捷键冲突，请选择其他组合')")
             shortcut_str = format_shortcut(old_kc, old_mod)
             self._eval_js(f"updateShortcutDisplay({json.dumps(shortcut_str)})")
 
